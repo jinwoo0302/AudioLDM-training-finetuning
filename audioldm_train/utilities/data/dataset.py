@@ -56,7 +56,8 @@ class AudioDataset(Dataset):
         self.trim_wav = False
         self.waveform_only = waveform_only
         self.add_ons = [eval(x) for x in add_ons]
-        print("Add-ons:", self.add_ons)
+        # DEBUG
+        # print("Add-ons:", self.add_ons)
 
         self.build_setting_parameters()
 
@@ -90,7 +91,6 @@ class AudioDataset(Dataset):
             random_start,
         ) = self.feature_extraction(index)
         text = self.get_sample_text_caption(datum, mix_datum, label_vector)
-
         data = {
             "text": text,  # list
             "fname": self.text_to_filename(text) if (not fname) else fname,  # list

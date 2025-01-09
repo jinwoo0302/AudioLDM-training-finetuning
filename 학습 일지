@@ -1,0 +1,309 @@
+===================================AudioLDM Training 코드 돌려보기====================================
+배치 사이즈 2 
+26분에 10000개
+배치 사이즈 4
+5분에 545x4개 = 2180개
+25분에 10900개
+낫배드? 
+
+근데 학습 로스를 보니까 걍 원래 주어진 대로 하는 게 나을듯.
+학습 배치 2
+평가 배치 2
+
+
+ㄴㄴ
+변경함
+학습이 매우 불안정한 관계로
+1. 배치를 4로 늘림(train, val 둘 다, 원래는 train은 2, val은 8이었음 - 8이면 OOM 에러)
+2. 학습률을 1e-4에서 3e-5로 줄임. 논문에서 ldm-S, ldm-L는 batch 5, 8, lr은 둘 다 3e-5로 함 
+3. warmup steps를 2000에서 4000으로 올림 - 매우 작은 학습률부터 시작해서 지정된 lr까지 점진적으로 증가 -> 초기 학습 단계에서 급격한 파라미터 변화 방지
+
+
+배치 4에서 학습 로스가 막 뛰어다님. 그러다가 메모리 에러 떠서 배치 2로 바꿈.
+데이터가 문제가 있는 듯
+
+Error encounter during audio feature extraction:  Waveform is too short, 0 ./data/dataset/audioset/zip_audios/unbalanced_train_segments/unbalanced_train_segments_part25/YWudGD6ZHRoY.wav
+
+## 빈 텐서 통계
+전체 텐서 개수: 173257
+빈 텐서 개수: 24751
+빈 텐서 비율: 14.29%
+
+키별 빈 텐서 개수:
+- label_vector: 24751개
+
+빈 텐서라는 게 뭔가 피쳐인 거 같음
+난 데이터 샘플을 필터링해야 하니까 텐서 기준이 아니라 
+
+
+
+
+현재 
+
+{
+  "timestep": [
+    4,
+    439
+  ],
+  "loss_value": 0.6457198858261108,
+  "previous_loss": 0.3019718825817108,
+  "batch_shape": [
+    2,
+    8,
+    256,
+    16
+  ],
+  "condition_keys": [
+    "film_clap_cond1"
+  ],
+  "tensor_info": {
+    "mean": 0.10130079090595245,
+    "std": 1.0061289072036743,
+    "max": 8.050458908081055,
+    "min": -4.455728054046631
+  }
+} 
+
+이처럼 로스 스파이크가 있을 때 평균과 표준편차를 보면 문제가 있는 데이터가 확실히 존재함. 
+따라서 저런 데이터의 경로를 로그로 찍어두고 삭제해야할 것 같음.
+코드는 짜뒀는데 지금 걍 즉흥적으로 배치를 16인가 8로 키우고 돌려보는데 왜 돌아가냐.
+배치 건드리는 건 다음에 다시 하고 로그 먼저 찍어서 이상치부터 탐지하는 거로 ㄱㄱ
+
+
+지금 음량 데이터의 분포가 0.1~0.3에 분포하는 걸 확인해서 정규화를 싹 다 시킴
+그리고 학습 데이터 배치 16, 평가 데이터 배치 4로 돌리는 중
+16은 OOM 나네. 8로 내려서 다시 하는 중
+글고 val을 해봐야 하는데 5에폭마다 해서, 걍 5000스텝마다 해봐야겠음.
+그건 힘들고   yaml 파일에서 validation_every_n_epochs: 1로 설정하면 1에폭에는 할 수 있네.
+ㅇㅇ 그렇게 설정하고 돌림. 2시간 걸릴듯. 학습은 배치 8로 되는데 평가가 배치 4로 될지가 미지수. 원래 평가가 배치 8이었는데 OOM 떴었음. 배치는 2였었나 그러고.
+
+여전히 0.1과 0.2 사이에서 로스가 왔다갔다함.
+로스 스파이크의 로그를 보는데 음 음량 분포를 다시 찍어보니까 0.1이랑 0.3 사이에 다 조절이 되어있어서 알아보니 target_rms를 -20으로 너무 크게 줬대
+
+그래서 현재 다시 음량 분포를 0.5 근처로 올리는 것과 동시에
+음성 파일 하나 들어봤는데 노이즈가 심해서 노이즈 제거도 같이 하는 중
+
+했는데 엄.. 막 엄청난 변화가 생기진 않는 거 같고
+그리고 어떤 경우엔 이상하게 왜곡이 되어서 도움이 될지도 미지수임.
+
+
+
+따라서 일단 데이터 만지는 건 여기까지 하고 걍 에폭 1에 validation해서 FAD값이라도 뽑아보는 걸 목표로 일단 전처리한 거로 실행하고 이후부턴 로스가 많이 뛸 때의 데이터 샘플을 고르는 작업을 해야겠음.
+이도 아니다 싶으면 모델의 구조를 좀 더 파고. ㅇㅇ 일단 Wiener 필터 이용한 방식에서 노이즈가 제거되는 걸 샘플로 확인함. 이거로 함 돌려보고 아니다 하면 이상치 데이터를 찾던가 아니면 모델을 보던가 해야겠음.
+
+
+원국 선배님 피드백: 로스가 걍 왔다갔다 하는 건 일반적임. 이상적인 로스 감소는 없음. validation까지 안 해봐도 되고 하더라도 다 할 필요 없음. OOM날 수 있으니까 한 4개만 해봐도 됨. 일단 학습시켜둔 거로 생성을 해봐라.
+
+
+5000스텝에서 멈췄고 생성해봤는데 걍 소음임.
+학습 배치 4로 줄이고 걍 원본 그대로 다시 학습중.
+차라리 걍 원래 있던 것들 싹 버리고 원래 코드로 할까 싶기도 함.. 그래도 뭐 걍 계속 해보죠 뭐. 내가 크게 코드를 건드린 건 없으니까.(아마?)
+
+
+
+1에폭 돌리고 해봤는데 성능 개별로.
+근데 로스가 줄지 않아도 에폭 수가 늘어나면 성능이 개선될 수 있다고 피드백 주심.
+원국 선배님 피드백: 1에폭은 너무 조금이다. 더 해바라. 그리고 성능 성공시켜봐라.
+즉 이거로 한 5에폭까지 해보고 그때부턴 걍 또 데이터나 이것저것 뒤져보면서 원인 분석을 해바야 할 거 같음.
+
+원국 선배님 피드백: 20에폭 정도는 가야 성능이 나오는지 안나오는지 알 수 있다. 글고 생성한거 audacity로 멜 스펙트로그램 보시곤 생성 못하는 걸 판단. 밸리데이션 OOM 나는 거 데이터세트의 __len__ 값만 2로 바꿔서 에러 가볍게 고치곤, vali 필요 없다 판단해서 configuration에서 vali 하는 에폭 주기 5000000000 줌. 이제 걍 기다리면 될듯. 중간중간 나오는 거로 생성해서 멜 찍어보고 잘 안된다 싶으면 그때서야 오류 분석이라, 그래서 어려운 학문임.
+
+
+
+1.6
+37에폭 돈 체크포인트로 합성해본 결과 꽤 그럴듯하게 잘 합성함(멜 스펙트로그램으로 확인함). 매우 세부적으로 묘사해야 하기 때문에 claude에게 텍스트 생성을 부탁함.
+
+===================================AudioLDM Training 코드 직접 짜보기====================================
+피드백: 학습 코드 참고해서 내가 직접 코드 작성해보기
+학습 코드 작성 마치면
+===================================AudioLDM을 오디오 임베딩 말고 텍스트 임베딩으로만 학습해보기====================================
+새로운 Task: LDM을 오디오 샘플 말고 텍스트 임베딩으로만 학습해보고 실험해봐라. +참고로 VAE는 사전학습 모델을 가져오는 거라 학습해야할 건 LDM뿐이다. 즉 오디오 샘플이 전혀 사용되지 않음.
+
+
+코드 다 짰고. 어느 정도 이해도 했고. 지금 yaml 파일에서 데이터 로더 배치 16으로 설정하고 돌렸는데 OOM 나서 메모리 단편화(fragments) 때문이래서 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64" # to prevent memory fragments 그거 방지하는 코드 추가하고 돌리는데도 안돼서 8로 줄였더니 돌아감. 모델 안에 들어가는 AE의 배치 말고, 그냥 모델 파라미터에 있는 배치 사이즈를 건드려야 함. 돌아가니까 max_split_size_mb:64를 지워보려고. 지웠더니 안 돌아가서 256으로 넣고 점차 줄여보는 중. 256으로 돌아가긴 하는데... 메모리를 거의 턱끝까지 써서 11264MiB 중에 10900MiB까지 감.. 언제 OOM이 나도 이상하지 않은 상황. 일단 몇 에폭정도 돌아가는 걸 확인을 하면서 코드를 수정해서 텍스트 임베딩으로 새롭게 학습 시작해야지.
+
+잘 학습하는 거 확인함. 학습 코드는 잘 작성함.
+
+인퍼런스에 텍스트가 주어지면 그거에서 임베딩 뽑는 코드가 있을 거임. 그 임베딩 뽑는 코드 찾아서 데이터 세트 메타데이터 캡션가지고 텍스트 데이터세트 만들면 될듯.
+
+
+audioldm_train/conditional_models.py의 PhonemeEncoder안에 forward에서 text_emb를 self.text_encoder(phoneme_idx, src_length) 로 구함. self.text_encoder = TextEncoder임. TextEncoder는 audioldm_train/modules/phoneme_encoder/encoder.py에 있음. TextEncoder의 forward를 보면 됨. 그럼 이제 이 TextEncoder를 실제로 쓰느냐만 확인하면 이 인코더로 텍스트 데이터세트 만들 수 있음.
+
+
+infer 함수에서 generate_sample함수 호출하면서 오디오 생성함. generate_sample 함수는 ddpm.py에 있음
+
+질문: 근데 LDM 학습할 때 오디오 샘플로부터 VAE Encoder를 거쳐서 latent variable z_0를 뽑아서 쓰는데, 텍스트만 사용하면 이 멜 스펙트로그램은 사용을 못 하잖아. 그럼 LDM이 텍스트 임베딩만 가지고 z_0없이도 학습이 가능한가? LDM을 알아야겠군. => 불가능! 임베딩만 가지고 디퓨전을 해봤자 생성되는 건 임베딩이겠지. 갔다가 돌아오는 거니. 근데 임베딩이 아니라 오디오가 만들고 싶으면 만들고자 하는 오디오 데이터의 정답 분포를 알아야 함.
+
+질문: 텍스트만 이용해서 학습하더라도 VAE의 인코더를 거쳐 나온 잠재 변수 z_0는 오디오 샘플로부터 추출해야 하지 않나요? 대답: ㅇㅇ.
+그치. 그래야 임베딩을 조건으로 해서 z0를 생성하도록 학습하는 거니까.
+
+정리하면 다음과 같음.
+전처리 과정
+	오디오 샘플에서 멜 스펙트로그램 추출
+	VAE 인코더로 멜 스펙트로그램을 압축하여 z0 생성
+	CLAP으로 오디오 임베딩 Ex 추출
+학습 과정
+	Forward Process
+	z0를 점진적으로 노이즈를 추가하여 가우시안 노이즈 zN으로 변환
+	Reverse Process
+	zn과 오디오 임베딩 Ex를 조건으로 사용하여 z0 복원
+목적 함수
+	노이즈 예측 네트워크가 각 스텝별로 예측한 노이즈와 실제 노이즈 간의 L2 손실
+
+이 목적 함수를 최소화하면서 모델은 점진적으로 노이즈를 제거하는 방법을 학습함.
+
+이제 내가 해야 할 일은 오디오 임베딩만 텍스트 임베딩으로 갈아끼우는 거임. 개쉬움.
+
+학습 코드에서 latent_diffusion 모델 객체를 생성하는 걸 들어가보면 get_obj_from_str로 config에 있는 target의 모델을 가져옴.  target: audioldm_train.modules.latent_diffusion.ddpm.LatentDiffusion
+즉 ddpm 안에 있는 LatentDiffusion(DDPM) 모델을 가져옴. 그럼 여기 안에서 
+문제: 데이터세트쪽에서 오디오 데이터세트가 아닌 텍스트 데이터세트를 만들어야 할까 or 디퓨전 모델 쪽에서 수정을 해야 할까. 근데 생각해보면 인풋이 바뀌는 거니까 걍 데이터 세트쪽만 변경하면 될 거 같은데.. 다시 보자.
+latent diffusion의 def forward(self, x, c, *args, **kwargs):를 보면         loss, loss_dict = self.p_losses(x, c, t, *args, **kwargs)로 로스를 구함. x랑 c, t가 뭐지.
+x: VAE 인코더가 생성한 잠재 변수(z0)
+c: 조건부 정보(오디오/텍스트 임베딩)
+t: 0부터 num_timesteps-1 사이의 랜덤한 타임스텝
+=> 그럼 난 diffusion model 건드릴 필요 없이 걍 c값만 다른 걸 넣어주면 되네. => 이를 위해 오디오 데이터세트를 수정하면 됨.
+
+파이토치 라이트닝의 학습 과정. 즉 training.fit()이 실행되면 데이터로더가 데이터세트의 __getitem__을 호출함. 그럼 그 반환값이 모델 ddpm의 training_step으로 전달되고 거기서 필요한 정보를 추출해서 forward 시 사용함. 여기서 되짚어야 할 점은 latent_diffusion model을 객체화할 때 ddpm.py의 class LatentDiffusion(DDPM) 를 부르는데 이때 상속받는 DDPM은 class DDPM(pl.LightningModule)임. 그리고 training_step은 DDPM에 있음. 그래서 사용 가능함. 참고로 training_step이란 건 파이토치 라이트닝에서 제공하는 기능인데 일반 파이토치랑은 달리 단일 배치의 학습 로직만 정의해두면 나머지 학습 과정(GPU처리, 최적화, 로깅=이벤트, 작업들 시간 순서대로 기록)은 자동화되고 학습과 추론도 명확히 분리된대. 좋네.
+암튼 그래서 training_step에 보면 loss, loss_dict = self.shared_step(batch) 라는 코드에서 배치 데이터로 로스 계산하는 게 있음. 이때 self가 누구를 의미하는지는 MRO(메소드 결정 순서) 규칙에 따라서 자식의 함수가 우선임. 즉 DDPM의 shared_step이 아니라 LatentDiffusion의 shard_step을 봐야함. 무작정 ctrl+좌클릭으로 들어가면 안되네 ㅋㅋㅋ.
+shared_step에서    x, c = self.get_input(batch, self.first_stage_key, unconditional_prob_cfg=unconditional_prob_cfg)를 호출함.
+get_input에서 c = self.get_learned_conditioning(xc, key=cond_model_key, unconditional_cfg=unconditional_cfg) 를 호출함. 이때 unconditional_cfg 는 
+
+unconditional_cfg = False
+if self.conditional_dry_run_finished and self.make_decision(unconditional_prob_cfg):
+	unconditional_cfg = True
+로 결정되고 unconditional_prob_cfg는 학습 시에는 0.1로 주어졌기 때문에 10%의 확률로 TRUE를 반환함.
+
+참고로 (shared_step함수에서 학습 시에는 Classifier-Free Guidance를 위한 무조건부 확률 사용(unconditional_prob_cfg = self.unconditional_prob_cfg)하되, 검증 시에는 항상 조건부 생성(unconditional_prob_cfg = 0.0) 수행함.) 
+
+근데 xc가 이제 보니까 cond_stage_key!="all"일 때는 super().get_input(batch, cond_stage_key) 로 구해짐.
+cond_stage_key는 
+for cond_model_key in self.cond_stage_model_metadata.keys():
+	cond_stage_key = self.cond_stage_model_metadata[cond_model_key]["cond_stage_key"] 이고
+
+self.cond_stage_model_metadata는 instantiate_cond_stage(self, config): 함수에서 초기화됨.
+config에 있는 키값들에 대해 초기화함.
+얘는 LatentDiffusion의 __init__에서         self.instantiate_cond_stage(cond_stage_config)로 호출되고
+학습 코드에서 ldm 객체 생성할 때 yaml의 파라미터들을 모두 제공하기 때문에 yaml에서 cond_stage_config를 확인하면 다음과 같음.
+ 
+    cond_stage_config:
+      film_clap_cond1:
+        cond_stage_key: text
+        conditioning_key: film
+        target: audioldm_train.conditional_models.CLAPAudioEmbeddingClassifierFreev2
+        params:
+          pretrained_path: data/checkpoints/clap_htsat_tiny.pt
+          sampling_rate: 16000
+          embed_mode: text # or text
+          amodel: HTSAT-tiny
+
+즉 여기 있는  값들로 instantiate_cond_stage가 self.cond_stage_model_metadata의 값을 초기화함.
+결국 cond_stage_key의 값은 text이기 때문에 all이 아님.
+따라서 xc = super().get_input(batch, cond_stage_key) 로 xc가 구해짐.
+근데 cond_stage_key가 과연 무슨 값일까 보면, 난 yaml에 있는 값을 사용할 줄 알았더만 출력해보니 text랑 waveform이 번갈아 나옴.
+즉 self.cond_stage_model_metadata값이 어디에서 마지막으로 업뎃이 되었느냐를 봐야함. 과거에 확인했듯이 LatentDiffusion 모델을 학습 코드에서 객체화할 때 
+LatentDiffusion의 __init__에서         self.instantiate_cond_stage(cond_stage_config)로 호출되면서 yaml값으로 처음 초기화되는 건 맞으나, 학습은 trainer.fit이고 그 때 파이토치 라이트닝을 상속한 DDPM 클래스에서 training_step이 매번 배치마다 실행되므로 이 함수를 봐야함.
+
+근데 전에는 그냥 지나쳤는데 training_step에서   loss, loss_dict = self.shared_step(batch) 전에  self.random_clap_condition()를 호출함.
+여기 안에서 CLAP모델을 이용해서 텍스트 데이터를 이용할지 오디오 데이터를 이용할지 50% 확률로 찍어서 self.cond_stage_model_metadata[key]["cond_stage_key"]의 값에는 text, waveform 중 하나를 주고, self.cond_stage_models[model_idx].embed_mode에는 text, audio 중 하나를 줌.
+그러면 안 되는 거 아니야? 텍스트만 사용해야 하잖슴. 혹시 이후에 shared_step에서 다시 값을 바꾸나?
+
+따라서! 현재 코드의 진행상 training_step 함수가 배치마다 실행되면서 그 안에 있는 self.random_clap_condition()함수도 호출되고 그 안에서 self.cond_stage_model_metadata 값 중 cond_stage_config 모델 키의 값의 cond_stage_key 값을 랜덤하게 text나 waveform중에 선택하고, get_input 함수에서 그렇게 설정된 값을 이용해서 xc = super().get_input(batch, cond_stage_key)를 호출함. 아니 그럼 cond_stage_key에는 text나 waveform 중에 하나가 들어가야 하는데 출력해보니까 fbank도 있는데? 3개임..
+
+근데 또 보니까 LatentDiffusion의 get_input함수에서 xc 구하기 전 위 코드에서 x=super().get_input(batch, k)가 있는데? 아 이건 그냥 first_Stage머시기로 vae에서 쓸 fbank 뽑는거고 xc출력쪽에서 cond_stage_key는 언제나 text 아니면 waveform임. 그리고 두 값 모두 batch에 있고. 
+아무튼 그렇게 구한 xc 가지고 c = self.get_learned_conditioning(xc, key=cond_model_key, unconditional_cfg=unconditional_cfg) 를 호출하면 조건부 변수를 얻을 수 있음.(Ex나 Ey. 입력 값 xc에 따라 달라짐.)
+저 함수 안에서는 unconditional_cfg가 false일 때 = 조건부 생성일 때는 clap 모델을 이용해서 임베딩을 뽑고, unconditional_cfg=true 즉, 무조건부 생성일 때는 yaml에 있는 film_clap_cond1모델의 타겟인 CLAPAudioEmbeddingClassifierFreev2클래스의 get_unconditional_condition 함수를 이용해서 빈 문자열을 임베딩해서 반환함. 웃긴 건 이거 보려고 모델 찍는데 아니나 다를까 
+
+Model type: <class 'audioldm_train.conditional_models.CLAPAudioEmbeddingClassifierFreev2'>
+Model embed_mode: text
+
+이나
+
+Model type: <class 'audioldm_train.conditional_models.CLAPAudioEmbeddingClassifierFreev2'>
+Model embed_mode: audio
+
+가 나오면서 모델의 embed_mode가 자꾸 바뀜.(코드는 model.embed_mode)
+지금 학습중인데 임베딩 타입을 반반씩 쓰고 있다는 것을 확인함.
+
+============================================AudioLDM의 문제점 발견=================================================
+따라서, 본래 코드의 문제점은 논문에서는 오디오 임베딩만 조건부 변수로 사용한다고 해놓고 코드에서는 50% 확률로 오디오나 텍스트 중 임베딩을 랜덤하게 뽑아서 self.cond_stage_model_metadata[key]["cond_stage_key"]의 값에는 text, waveform 중 하나를 주고, 
+self.cond_stage_models[model_idx].embed_mode에는 text, audio 중 하나를 줌. 
+(매번 training_step에서 self.random_clap_condition()가 호출됨.) 
+
+이렇게 저장된 cond_stage_key(정확히는 self.cond_stage_model_metadata.keys():  dict_keys(['film_clap_cond1']) 의 모델 키 값을 반복문으로 돌며(돌아봤자 하나긴 함) 각 모델 키에 대해 cond_stage_key 값을 conda_stage_key에 할당함. 근데 이 self.cond_stage_model_metadata[key]["cond_stage_key"]는 앞서 self.random_clap_condition()에서 랜덤하게 할당된 값이라 text이거나 waveform임.) 값을 이용해서 xc = super().get_input(batch, cond_stage_key) 를 뽑음.
+batch에는 fbank, stft, waveform, text, fname 등등의 다양한 값들이 내재하는데 내가 주는 key가 text면 text를 가져오고, waveform이면 waveform을 가져옴. 
+이렇게 가져온 xc 값을 c = self.get_learned_conditioning(xc, key=cond_model_key, unconditional_cfg=unconditional_cfg) 함수에 넣어서 임베딩 c를 뽑음.(이때 90%는 clap을 이용하고, 10%는 무작위 임베딩을 뽑아서 CFG기법을 이용. 두 임베딩의 차이를 증폭시켜서 주어진 텍스트 조건을 더 잘 따르도록 유도)
+
+
+전체적으로 보면 shared_step에서 배치를 받고 학습중이라면 unconditional_pro_cfg 값으로 0.1을, 추론중이라면 0을 사용하고,    
+x, c = self.get_input(batch, self.first_stage_key, unconditional_prob_cfg=unconditional_prob_cfg) 를 호출하여 z_0인 x와 conditional variable인 c를 추출함. 이때 self.first_stage_key의 값은 LatentDiffusion 모델 생성할 때 주어진 yaml에 first_stage_key: fbank 로 선언되어있고 출력도 확인함.
+이렇게 get_input을 부르면 주어진 x는 batch에서 fbank값을 가져와서 vae encoder를 거쳐 z_0가 되고 c는 앞서 말한 것처럼 (텍스트/오디오)임베딩이 반환됨.
+
+이 shared_step이 매번 배치 때마다 training_step에 의해 실행되는 거고, shared_step으로 loss를 구하기 전에 self.random_clap_condition() 함수가 먼저 호출이 되어 cond_stage_key의 값과 embed_mode가 랜덤하게 정해짐.
+
+
+==> 정리.
+1. 주어진 코드는 논문과 달리 오디오 임베딩만 사용하지 않고 텍스트/오디오 임베딩을 50%의 제비뽑기를 해서 사용하여 학습하였다.
+2. 나는 해당 코드를 그대로 실행하였기에 내 결과도 50%의 제비뽑기를 한 결과이다.
+3. 그럼 이제 뭘 하지. 제비뽑기 멈추고 텍스트만 이용하기? 아니면 오디오만?
+=> 원국 선배님께 질문한 결과 => 궁금한 거 먼저 해보라는 조언! => 논문대로 오디오만 한번 써보자.
+
+===================================AudioLDM을 오디오 임베딩으로만 학습해보기====================================
+
+
+코드 수정은 완료했고 내가 디버깅하면서 프린트 찍었던 부분은 다 # DEBUG로 주석처리해뒀고 처음부터 다시 학습하기 위해서 걍 yaml파일 복사해서 이름만 바꿈. 그래서 폴더 새로 생기도록 해서 이전 체크포인트랑 구분해둠.
+
+다만 배치 8로 할 때 OOM이 나서 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256의 값을 128로 줄여보려고.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+참고
+*args
+가변 개수의 위치 인자(positional arguments)를 튜플로 받음
+forward 함수가 추가 인자를 유연하게 받을 수 있게 함
+예: forward(x, c, param1, param2, ...)
+
+**kwargs
+가변 개수의 키워드 인자(keyword arguments)를 딕셔너리로 받음
+이름이 지정된 추가 매개변수를 처리할 수 있게 함
+예: forward(x, c, param_name1=value1, param_name2=value2, ...)
+
+=> 함수를 더 유연하게 만들어 다양한 상황에서 사용 가능
+
+
+
+참고 
+
+무조건부 조건(Unconditional Condition)은 Classifier-Free Guidance에서 사용되는 중요한 개념.
+
+무조건부 조건의 의미
+기본 개념
+	빈(empty) 조건 또는 아무런 의미가 없는 조건을 의미합니다
+	보통 0으로 채워진 임베딩 벡터나 특별한 토큰을 사용합니다
+	텍스트-오디오 생성의 경우, 빈 텍스트("")에 해당하는 임베딩입니다
+Classifier-Free Guidance에서의 역할
+작동 방식
+	조건부 샘플링: 원하는 텍스트 조건으로 오디오 생성
+	무조건부 샘플링: 빈 조건으로 오디오 생성
+	두 결과의 차이를 증폭시켜 최종 결과 생성
+목적
+	생성된 오디오가 주어진 텍스트 조건을 더 잘 따르도록 유도
+	샘플의 품질을 향상시킴
+	조건과 생성물 사이의 관계를 강화
+이것이 전체 샘플링의 10%를 무조건부 조건으로 학습하는 이유입니다.
+(audioldm에서는 다음과 같이 사용됨.
+ 일반적인 경우(90%): 입력 조건(텍스트/오디오)의 임베딩
+무조건부 경우(10%): 빈 조건의 임베딩)

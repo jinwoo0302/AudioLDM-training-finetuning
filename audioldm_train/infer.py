@@ -108,6 +108,7 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="The filelist that contain captions (and optionally filenames)",
+        
     )
     parser.add_argument(
         "-reload_from_ckpt",

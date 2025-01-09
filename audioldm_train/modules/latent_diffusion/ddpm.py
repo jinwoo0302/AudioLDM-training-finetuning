@@ -1,3 +1,4 @@
+import json
 from multiprocessing.sharedctypes import Value
 import statistics
 import sys
@@ -525,7 +526,7 @@ class DDPM(pl.LightningModule):
         )
         # for i in range(fbank.size(0)):
         #     fb = fbank[i].numpy()
-        #     seg_lb = seg_label[i].numpy()
+        #     seg_lb = seg_label[i].numpy() 
         #     logits = np.mean(seg_lb, axis=0)
         #     index = np.argsort(logits)[::-1][:5]
         #     plt.imshow(seg_lb[:,index], aspect="auto")
@@ -550,6 +551,9 @@ class DDPM(pl.LightningModule):
             if key not in ret.keys():
                 ret[key] = batch[key]
 
+        # DEBUG
+        # print("==========================================batch.keys()=========================")
+        # print("batch.keys(): ", batch.keys())
         return ret[k]
 
     def shared_step(self, batch):
@@ -656,7 +660,9 @@ class DDPM(pl.LightningModule):
     def random_clap_condition(self):
         # This function is only used during training, let the CLAP model to use both text and audio as condition
         assert self.training == True
-
+        # DEBUG
+        # print("cond_stage_model_metadata.keys() Info===============================")
+        # print(self.cond_stage_model_metadata.keys())
         for key in self.cond_stage_model_metadata.keys():
             metadata = self.cond_stage_model_metadata[key]
             model_idx, cond_stage_key, conditioning_key = (
@@ -664,6 +670,11 @@ class DDPM(pl.LightningModule):
                 metadata["cond_stage_key"],
                 metadata["conditioning_key"],
             )
+            # DEBUG
+            # print("key: ", key)
+            # print("model_idx: ", model_idx)
+            # print("cond_stage_key: ", cond_stage_key)
+            # print("conditioning_key: ", conditioning_key)
 
             # If we use CLAP as condition, we might use audio for training, but we also must use text for evaluation
             if isinstance(
@@ -675,12 +686,25 @@ class DDPM(pl.LightningModule):
                 self.cond_stage_model_metadata[key][
                     "embed_mode_orig"
                 ] = self.cond_stage_models[model_idx].embed_mode
-                if torch.randn(1).item() < 0.5:
-                    self.cond_stage_model_metadata[key]["cond_stage_key"] = "text"
-                    self.cond_stage_models[model_idx].embed_mode = "text"
-                else:
-                    self.cond_stage_model_metadata[key]["cond_stage_key"] = "waveform"
-                    self.cond_stage_models[model_idx].embed_mode = "audio"
+
+
+                # # original code
+                # if torch.randn(1).item() < 0.5: 
+                #     self.cond_stage_model_metadata[key]["cond_stage_key"] = "text"
+                #     self.cond_stage_models[model_idx].embed_mode = "text"
+                # else:
+                #     self.cond_stage_model_metadata[key]["cond_stage_key"] = "waveform"
+                #     self.cond_stage_models[model_idx].embed_mode = "audio"
+ 
+                
+                
+                # only use audio embeddings for training
+                self.cond_stage_model_metadata[key]["cond_stage_key"] = "waveform"
+                self.cond_stage_models[model_idx].embed_mode = "audio"
+
+            # DEBUG
+            # print("self.cond_stage_model_metadata[key][\"cond_stage_key\"]:", self.cond_stage_model_metadata[key]["cond_stage_key"] )
+            # print("self.cond_stage_models[model_idx].embed_mode: ", self.cond_stage_models[model_idx].embed_mode)
 
     def on_validation_epoch_start(self) -> None:
         # Use text as condition during validation
@@ -1161,14 +1185,55 @@ class LatentDiffusion(DDPM):
             )
         return self.scale_factor * z
 
+    # def get_learned_conditioning(self, c, key, unconditional_cfg):
+    #     assert key in self.cond_stage_model_metadata.keys()
+
+    #     # Classifier-free guidance
+    #     if not unconditional_cfg:
+    #         c = self.cond_stage_models[
+    #             self.cond_stage_model_metadata[key]["model_idx"]
+    #         ](c)
+    #     else:
+    #         # when the cond_stage_key is "all", pick one random element out
+    #         if isinstance(c, dict):
+    #             c = c[list(c.keys())[0]]
+
+    #         if isinstance(c, torch.Tensor):
+    #             batchsize = c.size(0)
+    #         elif isinstance(c, list):
+    #             batchsize = len(c)
+    #         else:
+    #             raise NotImplementedError()
+
+    #         c = self.cond_stage_models[
+    #             self.cond_stage_model_metadata[key]["model_idx"]
+    #         ].get_unconditional_condition(batchsize)
+
+    #     return c
+    
+
+
     def get_learned_conditioning(self, c, key, unconditional_cfg):
+        # DEBUG
+        # print("\n=== get_learned_conditioning Debug Info ===")
+        # print(f"Input batch type: {type(c)}") # torch.Tensor
+        # print(f"Input batch value: {c}")
+        # print(f"key: {key}") # film_clap_cond1
+        # print(f"unconditional_cfg: {unconditional_cfg}") # 10% True, 90% False
+        
         assert key in self.cond_stage_model_metadata.keys()
+        
+        # DEBUG
+        # print(f"\nSelected model_idx: {self.cond_stage_model_metadata[key]['model_idx']}")
+        # print(f"Selected cond_stage_model: {self.cond_stage_models[self.cond_stage_model_metadata[key]['model_idx']]}")
 
         # Classifier-free guidance
         if not unconditional_cfg:
             c = self.cond_stage_models[
                 self.cond_stage_model_metadata[key]["model_idx"]
             ](c)
+            # DEBUG
+            # print(f"\nConditional output type: {type(c)}")
         else:
             # when the cond_stage_key is "all", pick one random element out
             if isinstance(c, dict):
@@ -1180,12 +1245,32 @@ class LatentDiffusion(DDPM):
                 batchsize = len(c)
             else:
                 raise NotImplementedError()
+                
+            
+            # DEBUG
+            # print(f"Calculated batchsize: {batchsize}")
+            
+            # print("====================whose unconditional_condition?==============================")
+            # model = self.cond_stage_models[self.cond_stage_model_metadata[key]["model_idx"]]
+            # print("Model type:", type(model))
+            # print("Model embed_mode:", model.embed_mode)
+            # print("Model sampling_rate:", model.sampling_rate)
+
 
             c = self.cond_stage_models[
                 self.cond_stage_model_metadata[key]["model_idx"]
             ].get_unconditional_condition(batchsize)
+            
+            # DEBUG
+            # print(f"\nUnconditional output type: {type(c)}")
 
+        # DEBUG
+        # print("=====================================\n")
         return c
+
+
+
+    
 
     def get_input(
         self,
@@ -1197,6 +1282,8 @@ class LatentDiffusion(DDPM):
         return_encoder_output=False,
         unconditional_prob_cfg=0.1,
     ):
+        # DEBUG
+        # print("x initialization========================================")
         x = super().get_input(batch, k)
 
         x = x.to(self.device)
@@ -1213,6 +1300,9 @@ class LatentDiffusion(DDPM):
                 unconditional_prob_cfg
             ):
                 unconditional_cfg = True
+            
+            # DEBUG
+            # print("self.cond_stage_model_metadata.keys(): ", self.cond_stage_model_metadata.keys())
             for cond_model_key in self.cond_stage_model_metadata.keys():
                 cond_stage_key = self.cond_stage_model_metadata[cond_model_key][
                     "cond_stage_key"
@@ -1236,12 +1326,21 @@ class LatentDiffusion(DDPM):
                 # If cond_model_key is "all", that means the conditional model need all the information from a batch
 
                 if cond_stage_key != "all":
+                    # DEBUG
+                    # print("cond_stage_key: ", cond_stage_key)
+                    # print("xc initialization========================================")
                     xc = super().get_input(batch, cond_stage_key)
                     if type(xc) == torch.Tensor:
                         xc = xc.to(self.device)
                 else:
                     xc = batch
 
+
+                # DEBUG
+                # print("xc: ", xc)
+                
+                
+                
                 # if cond_stage_key is "all", xc will be a dictionary containing all keys
                 # Otherwise xc will be an entry of the dictionary
                 c = self.get_learned_conditioning(
@@ -1275,6 +1374,23 @@ class LatentDiffusion(DDPM):
 
         if not self.conditional_dry_run_finished:
             self.conditional_dry_run_finished = True
+
+
+
+
+
+        # DEBUG
+        # cond_dict 디버깅 출력 추가
+        # print("\n=== Conditioning Dictionary Debug Info ===")
+        # print("cond_dict keys:", cond_dict.keys())
+        # for key, value in cond_dict.items():
+        #     print(f"\nKey: {key}")
+        #     print(f"Value type: {type(value)}")
+        #     if isinstance(value, torch.Tensor):
+        #         print(f"Value shape: {value.shape}")
+        #         print(f"Value device: {value.device}")
+        #         print(f"First few values: {value[0][:5]}")  # 첫 5개 값만 출력
+        # print("=====================================\n")
 
         # Output is a dictionary, where the value could only be tensor or tuple
         return out
@@ -1343,6 +1459,8 @@ class LatentDiffusion(DDPM):
         )
 
         if self.optimize_ddpm_parameter:
+            # DEBUG
+            # print("self.filter_useful_cond_dict(c): ", self.filter_useful_cond_dict(c))
             loss, loss_dict = self(x, self.filter_useful_cond_dict(c))
         else:
             loss_dict = {}
@@ -1373,17 +1491,27 @@ class LatentDiffusion(DDPM):
             assert loss is not None
 
         return loss, loss_dict
+    
 
     def forward(self, x, c, *args, **kwargs):
-        t = torch.randint(
-            0, self.num_timesteps, (x.shape[0],), device=self.device
-        ).long()
+        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
+        
 
         # assert c is not None
         # c = self.get_learned_conditioning(c)
-
+        
         loss, loss_dict = self.p_losses(x, c, t, *args, **kwargs)
+        
         return loss, loss_dict
+
+
+
+
+
+
+
+
+
 
     def reorder_cond_dict(self, cond_dict):
         # To make sure the order is correct
@@ -2082,7 +2210,7 @@ class LatentDiffusionSpeedTest(pl.LightningModule):
         x = batch["waveform"]
         loss = self(x)
         return torch.mean(loss)
-
+    
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=0.02)
 

@@ -2,12 +2,15 @@
 # Email: haoheliu@gmail.com
 # Date: 11 Feb 2023
 
+import gc
 import sys
 
 sys.path.append("src")
 import shutil
 import os
 
+# Out of Memory 에러 방지용 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 import argparse
@@ -57,26 +60,39 @@ def main(configs, config_yaml_path, exp_group_name, exp_name, perform_validation
     else:
         dataloader_add_ons = []
 
+
+
+
+
     dataset = AudioDataset(configs, split="train", add_ons=dataloader_add_ons)
 
-    loader = DataLoader(
+    # 학습용 데이터로더
+    train_loader = DataLoader(
         dataset,
-        batch_size=batch_size,
-        num_workers=16,
-        pin_memory=True,
+        batch_size=8,
+        num_workers=12,  # CPU 코어 수에 맞게 조정
+        pin_memory=True, 
         shuffle=True,
+        persistent_workers=True,  # 워커 재사용으로 메모리 효율화
+        prefetch_factor=2  # 데이터 프리페치로 GPU 대기 시간 감소
     )
+
+
 
     print(
         "The length of the dataset is %s, the length of the dataloader is %s, the batchsize is %s"
-        % (len(dataset), len(loader), batch_size)
+        % (len(dataset), len(train_loader), batch_size)
     )
 
+    # 검증용 데이터로더 
     val_dataset = AudioDataset(configs, split="test", add_ons=dataloader_add_ons)
-
     val_loader = DataLoader(
         val_dataset,
-        batch_size=8,
+        batch_size=2,
+        num_workers=4,  # 검증은 더 적은 워커 사용
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2
     )
 
     # Copy test data
@@ -145,7 +161,9 @@ def main(configs, config_yaml_path, exp_group_name, exp_name, perform_validation
         project=configs["project"],
         config=configs,
         name="%s/%s" % (exp_group_name, exp_name),
+        log_model=True,  # 모델 체크포인트도 함께 저장
     )
+    wandb_logger.watch(latent_diffusion, log='all', log_freq=100)  # 그래디언트와 파라미터 변화 추적
 
     latent_diffusion.test_data_subset_path = test_data_subset_folder
 
@@ -197,10 +215,10 @@ def main(configs, config_yaml_path, exp_group_name, exp_name, perform_validation
         # if(perform_validation):
         #     trainer.validate(latent_diffusion, val_loader)
 
-        trainer.fit(latent_diffusion, loader, val_loader)
+        trainer.fit(latent_diffusion, train_loader, val_loader)
     else:
         trainer.fit(
-            latent_diffusion, loader, val_loader, ckpt_path=resume_from_checkpoint
+            latent_diffusion, train_loader, val_loader, ckpt_path=resume_from_checkpoint
         )
 
 
