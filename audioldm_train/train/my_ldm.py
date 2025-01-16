@@ -15,7 +15,7 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.loggers import WandbLogger
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128" # to prevent memory fragments
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64" # to prevent memory fragments
 
 def main(configs, config_yaml_path, exp_group_name, exp_name):
     if "seed" in configs.keys():
@@ -56,7 +56,7 @@ def main(configs, config_yaml_path, exp_group_name, exp_name):
     val_dataset=AudioDataset(configs, split="test", add_ons=dataloader_add_ons)
     val_loader=DataLoader(
         val_dataset,
-        batch_size=2,
+        batch_size=4,
         num_workers=4,
         pin_memory=True,
         persistent_workers=True,
@@ -200,7 +200,7 @@ if __name__=="__main__":
     )
 
     args=parser.parse_args()
-    
+
     assert torch.cuda.is_available(), "CUDA is not available"
     
     config_yaml=args.config_yaml
@@ -213,5 +213,6 @@ if __name__=="__main__":
 
     if args.reload_from_ckpt is not None:
         config_yaml["reload_from_ckpt"]=args.reload_from_ckpt
+
 
     main(config_yaml, config_yaml_path, exp_group_name, exp_name)

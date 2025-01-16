@@ -698,9 +698,13 @@ class DDPM(pl.LightningModule):
  
                 
                 
-                # only use audio embeddings for training
-                self.cond_stage_model_metadata[key]["cond_stage_key"] = "waveform"
-                self.cond_stage_models[model_idx].embed_mode = "audio"
+                # # only use audio embeddings for training
+                # self.cond_stage_model_metadata[key]["cond_stage_key"] = "waveform"
+                # self.cond_stage_models[model_idx].embed_mode = "audio"
+
+                # only use text embeddings for training
+                self.cond_stage_model_metadata[key]["cond_stage_key"] = "text"
+                self.cond_stage_models[model_idx].embed_mode = "text"
 
             # DEBUG
             # print("self.cond_stage_model_metadata[key][\"cond_stage_key\"]:", self.cond_stage_model_metadata[key]["cond_stage_key"] )
@@ -1321,6 +1325,7 @@ class LatentDiffusion(DDPM):
                         print(
                             "Warning: CLAP model normally should use text for evaluation"
                         )
+                        print("cond_stage_key: ",cond_stage_key)
 
                 # The original data for conditioning
                 # If cond_model_key is "all", that means the conditional model need all the information from a batch

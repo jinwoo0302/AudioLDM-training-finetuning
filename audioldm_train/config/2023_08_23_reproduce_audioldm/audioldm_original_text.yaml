@@ -22,7 +22,7 @@ data:
   dataloader_add_ons: [] 
 
 step:
-  validation_every_n_epochs: 1
+  validation_every_n_epochs: 1000000000000000000000
   save_checkpoint_every_n_steps: 5000
   # limit_val_batches: 2
   max_steps: 800000
@@ -90,7 +90,7 @@ model:
     warmup_steps: *warmup_steps
     optimize_ddpm_parameter: *optimize_ddpm_parameter
     sampling_rate: *sampling_rate
-    batchsize: 8
+    batchsize: 4
     linear_start: 0.0015
     linear_end: 0.0195
     num_timesteps_cond: 1
